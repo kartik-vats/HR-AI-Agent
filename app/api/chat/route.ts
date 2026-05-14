@@ -1,90 +1,16 @@
+# Updated `app/api/chat/route.ts`
+
+````ts
 // app/api/chat/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import Groq from "groq-sdk";
-import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { HuggingFaceTransformersEmbeddings } from "@langchain/community/embeddings/hf_transformers";
 
 export const runtime = "nodejs";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
-
-// =========================
-// EMBEDDING MODEL (LangChain)
-// =========================
-
-const embeddings = new HuggingFaceTransformersEmbeddings({
-  modelName: "Xenova/all-MiniLM-L6-v2",
-});
-
-// =========================
-// TEXT SPLITTER
-// =========================
-
-const splitter = new RecursiveCharacterTextSplitter({
-  chunkSize: 300,
-  chunkOverlap: 50,
-  separators: ["\n\n", "\n", ".", " "],
-});
-
-// =========================
-// RAG: Retrieve relevant chunks from resume for a given JD
-// =========================
-
-// =========================
-// LIGHTWEIGHT RAG (No Vector Store)
-// =========================
-
-async function retrieveRelevantChunks(
-  resumeText: string,
-  jobDescription: string,
-  topK: number = 3
-): Promise<string> {
-
-  // Step 1: Split resume into chunks
-  const chunks = await splitter.splitText(resumeText);
-
-  // Step 2: Embed JD
-  const jdEmbedding = await embeddings.embedQuery(jobDescription);
-
-  // Step 3: Embed all chunks
-  const chunkEmbeddings = await embeddings.embedDocuments(chunks);
-
-  // Step 4: Score chunks using cosine similarity
-  const scoredChunks = chunks.map((chunk, i) => ({
-    chunk,
-    score: cosineSimilarity(jdEmbedding, chunkEmbeddings[i]),
-  }));
-
-  // Step 5: Take top-K most relevant chunks
-  const topChunks = scoredChunks
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK)
-    .map((item) => item.chunk);
-
-  // Step 6: Merge into final context
-  return topChunks.join("\n---\n");
-}
-
-// =========================
-// COSINE SIMILARITY
-// =========================
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-
-  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
-}
 
 // =========================
 // EVALUATE ONE CANDIDATE
@@ -107,7 +33,7 @@ async function evaluateCandidate(
   const prompt = `
 You are an expert AI HR evaluator.
 
-You are given ONLY the most relevant excerpts from a candidate's resume (retrieved via semantic search against the job description). Use these excerpts to evaluate the candidate.
+You are given a candidate's resume and a job description. Evaluate the candidate carefully and realistically.
 
 RUBRIC:
 1. Skills Match (40%)
@@ -146,20 +72,20 @@ FORMAT:
 {
   "overallScore": 84,
   "recommendation": "Hire",
-  "summary": "The candidate demonstrates strong alignment with the required skills and has relevant project experience. Their background in X makes them a strong fit for this role.",
+  "summary": "The candidate demonstrates strong alignment with the required skills and has relevant project experience.",
   "rubric": {
     "skills": { "score": 9, "reason": "Proficient in all required tech stack" },
-    "experience": { "score": 7, "reason": "3 years in similar domain" },
-    "education": { "score": 8, "reason": "Relevant degree and certifications" },
-    "projects": { "score": 9, "reason": "Portfolio directly matches job requirements" },
-    "communication": { "score": 7, "reason": "Resume is well-structured and clear" }
+    "experience": { "score": 7, "reason": "Relevant experience" },
+    "education": { "score": 8, "reason": "Relevant degree" },
+    "projects": { "score": 9, "reason": "Strong projects" },
+    "communication": { "score": 7, "reason": "Clear resume" }
   }
 }
 
 JOB DESCRIPTION:
 ${jobDescription}
 
-RELEVANT RESUME EXCERPTS FOR CANDIDATE "${candidateName}":
+CANDIDATE RESUME FOR "${candidateName}":
 ${relevantContext}
 `;
 
@@ -180,18 +106,18 @@ ${relevantContext}
 
   let parsed;
 
-try {
-  parsed = JSON.parse(cleaned);
-} catch (err) {
-  console.error("JSON PARSE ERROR:", cleaned);
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    console.error("JSON PARSE ERROR:", cleaned);
 
-  parsed = {
-    overallScore: 0,
-    recommendation: "Reject",
-    summary: "Failed to parse AI response.",
-    rubric: {},
-  };
-}
+    parsed = {
+      overallScore: 0,
+      recommendation: "Reject",
+      summary: "Failed to parse AI response.",
+      rubric: {},
+    };
+  }
 
   return {
     id: candidateId,
@@ -204,9 +130,6 @@ try {
 }
 
 // =========================
-// MAIN ROUTE HANDLER
-// =========================
-// =========================
 // SLIGHT SCORE NORMALIZATION
 // =========================
 
@@ -218,18 +141,14 @@ function normalizeScores(results: any[]) {
 
     let score = candidate.overallScore;
 
-    // If same score already exists,
-    // slightly adjust by 1-3 points
     while (usedScores.has(score)) {
 
       const adjustment = Math.floor(Math.random() * 3) + 1;
 
-      // randomly + or -
       score += Math.random() > 0.5
         ? adjustment
         : -adjustment;
 
-      // keep safe bounds
       score = Math.max(45, Math.min(99, score));
     }
 
@@ -241,6 +160,11 @@ function normalizeScores(results: any[]) {
     };
   });
 }
+
+// =========================
+// MAIN ROUTE HANDLER
+// =========================
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -251,7 +175,12 @@ export async function POST(req: NextRequest) {
     // VALIDATION
     // =========================
 
-    if (!jobDescription || !candidates || !Array.isArray(candidates) || candidates.length === 0) {
+    if (
+      !jobDescription ||
+      !candidates ||
+      !Array.isArray(candidates) ||
+      candidates.length === 0
+    ) {
       return NextResponse.json(
         { error: "jobDescription and a non-empty candidates array are required" },
         { status: 400 }
@@ -259,45 +188,39 @@ export async function POST(req: NextRequest) {
     }
 
     // =========================
-    // PROCESS EACH CANDIDATE WITH RAG
+    // PROCESS CANDIDATES
     // =========================
 
-const results = [];
+    const results = [];
 
-for (const candidate of candidates) {
+    for (const candidate of candidates) {
 
-  // Step A: Retrieve relevant chunks
-  const relevantContext = await retrieveRelevantChunks(
-    candidate.text,
-    jobDescription,
-    3 // smaller topK
-  );
+      const relevantContext = candidate.text;
 
-  console.log(`[${candidate.name}] Relevant chunks:\n`, relevantContext);
+      console.log(`[${candidate.name}] Resume Loaded`);
 
-  // Step B: Evaluate candidate
-  const evaluation = await evaluateCandidate(
-    candidate.id,
-    candidate.name,
-    relevantContext,
-    jobDescription
-  );
+      const evaluation = await evaluateCandidate(
+        candidate.id,
+        candidate.name,
+        relevantContext,
+        jobDescription
+      );
 
-  results.push(evaluation);
+      results.push(evaluation);
 
-  // Small delay to avoid TPM spikes
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-}
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
 
     // =========================
-    // RANK BY OVERALL SCORE
+    // RANK BY SCORE
     // =========================
 
     const normalizedResults = normalizeScores(results);
 
-const rankedCandidates = normalizedResults.sort(
-  (a, b) => b.overallScore - a.overallScore
-);
+    const rankedCandidates = normalizedResults.sort(
+      (a, b) => b.overallScore - a.overallScore
+    );
+
     // =========================
     // FINAL RESPONSE
     // =========================
@@ -306,9 +229,26 @@ const rankedCandidates = normalizedResults.sort(
 
   } catch (error) {
     console.error("FULL ERROR:", error);
+
     return NextResponse.json(
-      { error: "Something went wrong" },
+      {
+        error: "Something went wrong",
+        details: String(error),
+      },
       { status: 500 }
     );
   }
 }
+````
+
+## Also run these commands
+
+```bash
+
+```
+
+Then:
+
+```bash
+
+```
