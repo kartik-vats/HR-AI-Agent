@@ -1,7 +1,3 @@
-# Updated `app/api/chat/route.ts`
-
-````ts
-// app/api/chat/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import Groq from "groq-sdk";
@@ -239,16 +235,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-````
 
-## Also run these commands
-
-```bash
-
-```
-
-Then:
-
-```bash
-
-```
